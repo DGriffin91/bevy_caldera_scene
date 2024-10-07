@@ -12,3 +12,4 @@ Cargo.lock
 assets/hotel_01.glb
 
 *.exe
+assets/hotel_01_with_skel.glb

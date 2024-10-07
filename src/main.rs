@@ -14,7 +14,13 @@ use bevy::{
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusionBundle},
     prelude::*,
-    render::view::NoFrustumCulling,
+    render::{
+        render_resource::{
+            Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+        },
+        texture::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
+        view::NoFrustumCulling,
+    },
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
@@ -22,6 +28,8 @@ use camera_controller::{CameraController, CameraControllerPlugin};
 
 use crate::light_consts::lux;
 
+const UNIQUE_MESH_QTY: usize = 24182;
+const MESH_INSTANCE_QTY: usize = 35689;
 #[derive(FromArgs, Resource, Clone)]
 /// Config
 pub struct Args {
@@ -32,6 +40,14 @@ pub struct Args {
     /// whether to disable frustum culling.
     #[argh(switch)]
     no_frustum_culling: bool,
+
+    /// assign randomly generated materials to each unique mesh (mesh instances also share materials)
+    #[argh(switch)]
+    random_materials: bool,
+
+    /// quantity of unique textures sets to randomly select from. (A texture set being: base_color, normal, roughness)
+    #[argh(option, default = "0")]
+    texture_count: u32,
 }
 
 pub fn main() {
@@ -61,7 +77,7 @@ pub fn main() {
             TemporalAntiAliasPlugin,
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, (input, benchmark));
+        .add_systems(Update, (assign_rng_materials, input, benchmark));
     if args.no_frustum_culling {
         app.add_systems(Update, add_no_frustum_culling);
     }
@@ -97,13 +113,13 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
             directional_light: DirectionalLight {
                 // Using just rgb here for bevy 0.13 compat
                 color: Color::rgb(1.0, 0.87, 0.78),
-                illuminance: lux::OVERCAST_DAY,
+                illuminance: lux::FULL_DAYLIGHT,
                 shadows_enabled: !args.minimal,
                 shadow_depth_bias: 0.2,
                 shadow_normal_bias: 0.2,
             },
             cascade_shadow_config: CascadeShadowConfigBuilder {
-                num_cascades: 4,
+                num_cascades: 3,
                 minimum_distance: 0.1,
                 maximum_distance: 80.0,
                 first_cascade_far_bound: 5.0,
@@ -146,6 +162,122 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
             TemporalAntiAliasBundle::default(),
         ))
         .insert(ScreenSpaceAmbientOcclusionBundle::default());
+    }
+}
+
+// Go though each unique mesh and randomly generate a material.
+// Each unique so instances are maintained.
+pub fn assign_rng_materials(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    meshes: Res<Assets<Mesh>>,
+    mesh_instances: Query<(Entity, &Handle<Mesh>)>,
+    args: Res<Args>,
+    mut done: Local<bool>,
+) {
+    // TODO figure out a better way to reliably figure out things are done loading
+    let all_meshes_loaded = meshes.len() == UNIQUE_MESH_QTY;
+    let all_mesh_instances_loaded = mesh_instances.iter().len() == MESH_INSTANCE_QTY;
+
+    if !args.random_materials || *done || !all_meshes_loaded || !all_mesh_instances_loaded {
+        return;
+    }
+
+    let base_color_textures = (0..args.texture_count)
+        .map(|i| {
+            images.add(generate_random_compressed_texture_with_mipmaps(
+                2048, false, i,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let normal_textures = (0..args.texture_count)
+        .map(|i| {
+            images.add(generate_random_compressed_texture_with_mipmaps(
+                2048,
+                false,
+                i + 1024,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let roughness_textures = (0..args.texture_count)
+        .map(|i| {
+            images.add(generate_random_compressed_texture_with_mipmaps(
+                2048,
+                true,
+                i + 2048,
+            ))
+        })
+        .collect::<Vec<_>>();
+
+    for (i, (mesh_h, _mesh)) in meshes.iter().enumerate() {
+        let mut base_color_texture = None;
+        let mut normal_texture = None;
+        let mut roughness_texture = None;
+
+        if !base_color_textures.is_empty() {
+            base_color_texture = Some(base_color_textures[i % base_color_textures.len()].clone());
+        }
+        if !normal_textures.is_empty() {
+            normal_texture = Some(normal_textures[i % normal_textures.len()].clone());
+        }
+        if !roughness_textures.is_empty() {
+            roughness_texture = Some(roughness_textures[i % roughness_textures.len()].clone());
+        }
+
+        let unique_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(
+                hash_noise(i as u32, 0, 0),
+                hash_noise(i as u32, 0, 1),
+                hash_noise(i as u32, 0, 2),
+            ),
+            base_color_texture,
+            normal_map_texture: normal_texture,
+            metallic_roughness_texture: roughness_texture,
+            ..default()
+        });
+        for (entity, mesh_instance_h) in mesh_instances.iter() {
+            if mesh_instance_h.id() == mesh_h {
+                commands.entity(entity).insert(unique_material.clone());
+            }
+        }
+    }
+
+    *done = true;
+}
+
+fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u32) -> Image {
+    let data = (0..calculate_bcn_image_size_with_mips(size, if bc4 { 8 } else { 16 }))
+        .map(|i| uhash(i, seed) as u8)
+        .collect::<Vec<_>>();
+
+    Image {
+        texture_descriptor: TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: size,
+                height: size,
+                ..default()
+            },
+            dimension: TextureDimension::D2,
+            format: if bc4 {
+                TextureFormat::Bc4RUnorm
+            } else {
+                TextureFormat::Bc7RgbaUnormSrgb
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            ..default()
+        }),
+
+        data,
+        ..Default::default()
     }
 }
 
@@ -246,4 +378,40 @@ pub fn add_no_frustum_culling(
     for entity in convert_query.iter() {
         commands.entity(entity).insert(NoFrustumCulling);
     }
+}
+
+#[inline(always)]
+pub fn uhash(a: u32, b: u32) -> u32 {
+    let mut x = (a.overflowing_mul(1597334673).0) ^ (b.overflowing_mul(3812015801).0);
+    // from https://nullprogram.com/blog/2018/07/31/
+    x = x ^ (x >> 16);
+    x = x.overflowing_mul(0x7feb352d).0;
+    x = x ^ (x >> 15);
+    x = x.overflowing_mul(0x846ca68b).0;
+    x = x ^ (x >> 16);
+    x
+}
+
+#[inline(always)]
+pub fn unormf(n: u32) -> f32 {
+    n as f32 * (1.0 / 0xffffffffu32 as f32)
+}
+
+#[inline(always)]
+pub fn hash_noise(x: u32, y: u32, z: u32) -> f32 {
+    let urnd = uhash(x, (y << 11) + z);
+    unormf(urnd)
+}
+
+// BC7 block is 16 bytes, BC4 block is 8 bytes
+fn calculate_bcn_image_size_with_mips(size: u32, block_size: u32) -> u32 {
+    let mut total_size = 0;
+    let mut mip_size = size;
+    while mip_size > 4 {
+        let num_blocks = mip_size / 4; // Round up
+        let mip_level_size = num_blocks * num_blocks * block_size;
+        total_size += mip_level_size;
+        mip_size = (mip_size / 2).max(1);
+    }
+    total_size
 }

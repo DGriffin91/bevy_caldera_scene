@@ -247,9 +247,8 @@ pub fn assign_rng_materials(
 }
 
 fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u32) -> Image {
-    let data = (0..calculate_bcn_image_size_with_mips(size, if bc4 { 8 } else { 16 }))
-        .map(|i| uhash(i, seed) as u8)
-        .collect::<Vec<_>>();
+    let (bytes, mip_count) = calculate_bcn_image_size_with_mips(size, if bc4 { 8 } else { 16 });
+    let data = (0..bytes).map(|i| uhash(i, seed) as u8).collect::<Vec<_>>();
 
     Image {
         texture_descriptor: TextureDescriptor {
@@ -265,7 +264,7 @@ fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u
             } else {
                 TextureFormat::Bc7RgbaUnormSrgb
             },
-            mip_level_count: 1,
+            mip_level_count: mip_count,
             sample_count: 1,
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
@@ -404,14 +403,16 @@ pub fn hash_noise(x: u32, y: u32, z: u32) -> f32 {
 }
 
 // BC7 block is 16 bytes, BC4 block is 8 bytes
-fn calculate_bcn_image_size_with_mips(size: u32, block_size: u32) -> u32 {
+fn calculate_bcn_image_size_with_mips(size: u32, block_size: u32) -> (u32, u32) {
     let mut total_size = 0;
     let mut mip_size = size;
+    let mut mip_count = 0;
     while mip_size > 4 {
+        mip_count += 1;
         let num_blocks = mip_size / 4; // Round up
         let mip_level_size = num_blocks * num_blocks * block_size;
         total_size += mip_level_size;
         mip_size = (mip_size / 2).max(1);
     }
-    total_size
+    (total_size, mip_count.max(1))
 }

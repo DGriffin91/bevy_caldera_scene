@@ -45,7 +45,7 @@ pub struct Args {
     #[argh(switch)]
     random_materials: bool,
 
-    /// quantity of unique textures sets to randomly select from. (A texture set being: base_color, normal, roughness)
+    /// quantity of unique textures sets to randomly select from. (A texture set being: base_color, roughness)
     #[argh(option, default = "0")]
     texture_count: u32,
 }
@@ -191,15 +191,6 @@ pub fn assign_rng_materials(
             ))
         })
         .collect::<Vec<_>>();
-    let normal_textures = (0..args.texture_count)
-        .map(|i| {
-            images.add(generate_random_compressed_texture_with_mipmaps(
-                2048,
-                false,
-                i + 1024,
-            ))
-        })
-        .collect::<Vec<_>>();
     let roughness_textures = (0..args.texture_count)
         .map(|i| {
             images.add(generate_random_compressed_texture_with_mipmaps(
@@ -212,14 +203,10 @@ pub fn assign_rng_materials(
 
     for (i, (mesh_h, _mesh)) in meshes.iter().enumerate() {
         let mut base_color_texture = None;
-        let mut normal_texture = None;
         let mut roughness_texture = None;
 
         if !base_color_textures.is_empty() {
             base_color_texture = Some(base_color_textures[i % base_color_textures.len()].clone());
-        }
-        if !normal_textures.is_empty() {
-            normal_texture = Some(normal_textures[i % normal_textures.len()].clone());
         }
         if !roughness_textures.is_empty() {
             roughness_texture = Some(roughness_textures[i % roughness_textures.len()].clone());
@@ -232,7 +219,6 @@ pub fn assign_rng_materials(
                 hash_noise(i as u32, 0, 2),
             ),
             base_color_texture,
-            normal_map_texture: normal_texture,
             metallic_roughness_texture: roughness_texture,
             ..default()
         });

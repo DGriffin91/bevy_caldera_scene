@@ -28,8 +28,10 @@ use camera_controller::{CameraController, CameraControllerPlugin};
 
 use crate::light_consts::lux;
 
+// TODO figure out a better way to reliably figure out things are done loading
 const UNIQUE_MESH_QTY: usize = 24182;
 const MESH_INSTANCE_QTY: usize = 35689;
+
 #[derive(FromArgs, Resource, Clone)]
 /// Config
 pub struct Args {
@@ -195,7 +197,7 @@ pub fn assign_rng_materials(
         .map(|i| {
             images.add(generate_random_compressed_texture_with_mipmaps(
                 2048,
-                true,
+                false, // Using bc4 here seems to not work
                 i + 2048,
             ))
         })

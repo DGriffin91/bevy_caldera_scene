@@ -8,11 +8,11 @@ mod camera_controller;
 use argh::FromArgs;
 use bevy::{
     core_pipeline::{
-        bloom::BloomSettings,
-        experimental::taa::{TemporalAntiAliasBundle, TemporalAntiAliasPlugin},
+        bloom::Bloom,
+        experimental::taa::{TemporalAntiAliasPlugin, TemporalAntiAliasing},
     },
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
-    pbr::{CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusionBundle},
+    pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion},
     prelude::*,
     render::{
         render_resource::{
@@ -58,8 +58,6 @@ pub fn main() {
     let mut app = App::new();
 
     app.insert_resource(args.clone())
-        .insert_resource(Msaa::Off)
-        // Using just rgb here for bevy 0.13 compat
         .insert_resource(WinitSettings {
             focused_mode: UpdateMode::Continuous,
             unfocused_mode: UpdateMode::Continuous,
@@ -95,75 +93,65 @@ pub struct GrifLight;
 
 pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<Args>) {
     commands.spawn((
-        SceneBundle {
-            scene: asset_server.load("hotel_01.glb#Scene0"),
-            transform: Transform::from_scale(Vec3::splat(0.01)),
-            ..default()
-        },
+        SceneRoot(asset_server.load("hotel_01.glb#Scene0")),
+        Transform::from_scale(Vec3::splat(0.01)),
         PostProcScene,
     ));
 
     // Sun
     commands
-        .spawn(DirectionalLightBundle {
-            transform: Transform::from_rotation(Quat::from_euler(
-                EulerRot::XYZ,
-                PI * -0.35,
-                PI * -0.13,
-                0.0,
-            )),
-            directional_light: DirectionalLight {
-                // Using just rgb here for bevy 0.13 compat
-                color: Color::rgb(1.0, 0.87, 0.78),
+        .spawn((
+            Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, PI * -0.35, PI * -0.13, 0.0)),
+            DirectionalLight {
+                color: Color::srgb(1.0, 0.87, 0.78),
                 illuminance: lux::FULL_DAYLIGHT,
                 shadows_enabled: !args.minimal,
                 shadow_depth_bias: 0.2,
                 shadow_normal_bias: 0.2,
+                ..default()
             },
-            cascade_shadow_config: CascadeShadowConfigBuilder {
+            CascadeShadowConfig::from(CascadeShadowConfigBuilder {
                 num_cascades: 3,
                 minimum_distance: 0.1,
                 maximum_distance: 80.0,
                 first_cascade_far_bound: 5.0,
                 overlap_proportion: 0.2,
-            }
-            .into(),
-            ..default()
-        })
+            }),
+        ))
         .insert(GrifLight);
 
     // Camera
     let mut cam = commands.spawn((
-        Camera3dBundle {
-            camera: Camera {
-                hdr: true,
-                ..default()
-            },
-            transform: CAM_POS_1,
-            projection: Projection::Perspective(PerspectiveProjection {
-                fov: std::f32::consts::PI / 3.0,
-                near: 0.1,
-                far: 1000.0,
-                aspect_ratio: 1.0,
-            }),
+        Msaa::Off,
+        Camera3d::default(),
+        Camera {
+            hdr: true,
             ..default()
         },
+        CAM_POS_1,
+        Projection::Perspective(PerspectiveProjection {
+            fov: std::f32::consts::PI / 3.0,
+            near: 0.1,
+            far: 1000.0,
+            aspect_ratio: 1.0,
+        }),
         EnvironmentMapLight {
             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),
             specular_map: asset_server.load("environment_maps/pisa_specular_rgb9e5_zstd.ktx2"),
             intensity: 1000.0,
+            ..default()
         },
         CameraController::default().print_controls(),
     ));
     if !args.minimal {
         cam.insert((
-            BloomSettings {
+            Bloom {
                 intensity: 0.02,
                 ..default()
             },
-            TemporalAntiAliasBundle::default(),
+            TemporalAntiAliasing::default(),
         ))
-        .insert(ScreenSpaceAmbientOcclusionBundle::default());
+        .insert(ScreenSpaceAmbientOcclusion::default());
     }
 }
 
@@ -174,7 +162,7 @@ pub fn assign_rng_materials(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
-    mesh_instances: Query<(Entity, &Handle<Mesh>)>,
+    mesh_instances: Query<(Entity, &Mesh3d)>,
     args: Res<Args>,
     mut done: Local<bool>,
 ) {
@@ -226,7 +214,9 @@ pub fn assign_rng_materials(
         });
         for (entity, mesh_instance_h) in mesh_instances.iter() {
             if mesh_instance_h.id() == mesh_h {
-                commands.entity(entity).insert(unique_material.clone());
+                commands
+                    .entity(entity)
+                    .insert(MeshMaterial3d::from(unique_material.clone()));
             }
         }
     }
@@ -309,8 +299,8 @@ fn benchmark(
     mut camera: Query<&mut Transform, With<Camera>>,
     materials: Res<Assets<StandardMaterial>>,
     meshes: Res<Assets<Mesh>>,
-    has_std_mat: Query<&Handle<StandardMaterial>>,
-    has_mesh: Query<&Handle<Mesh>>,
+    has_std_mat: Query<&MeshMaterial3d<StandardMaterial>>,
+    has_mesh: Query<&Mesh3d>,
     mut bench_started: Local<Option<Instant>>,
     mut bench_frame: Local<u32>,
     mut count_per_step: Local<u32>,
@@ -320,7 +310,7 @@ fn benchmark(
         *bench_started = Some(Instant::now());
         *bench_frame = 0;
         // Try to render for around 2s or at least 30 frames per step
-        *count_per_step = ((2.0 / time.delta_seconds()) as u32).max(30);
+        *count_per_step = ((2.0 / time.delta_secs()) as u32).max(30);
         println!(
             "Starting Benchmark with {} frames per step",
             *count_per_step
@@ -360,7 +350,13 @@ fn benchmark(
 
 pub fn add_no_frustum_culling(
     mut commands: Commands,
-    convert_query: Query<Entity, (Without<NoFrustumCulling>, With<Handle<StandardMaterial>>)>,
+    convert_query: Query<
+        Entity,
+        (
+            Without<NoFrustumCulling>,
+            With<MeshMaterial3d<StandardMaterial>>,
+        ),
+    >,
 ) {
     for entity in convert_query.iter() {
         commands.entity(entity).insert(NoFrustumCulling);

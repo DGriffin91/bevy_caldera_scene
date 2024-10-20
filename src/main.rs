@@ -300,7 +300,6 @@ fn benchmark(
     materials: Res<Assets<StandardMaterial>>,
     meshes: Res<Assets<Mesh>>,
     has_std_mat: Query<&MeshMaterial3d<StandardMaterial>>,
-    // has_std_mat: Query<&Handle<StandardMaterial>>,
     has_mesh: Query<&Mesh3d>,
     mut bench_started: Local<Option<Instant>>,
     mut bench_frame: Local<u32>,

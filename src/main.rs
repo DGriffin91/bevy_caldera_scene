@@ -93,11 +93,6 @@ pub struct GrifLight;
 
 pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<Args>) {
     commands.spawn((
-        // SceneBundle {
-        //     scene: asset_server.load("hotel_01.glb#Scene0"),
-        //     transform: Transform::from_scale(Vec3::splat(0.01)),
-        //     ..default()
-        // },
         SceneRoot(asset_server.load("hotel_01.glb#Scene0")),
         Transform::from_scale(Vec3::splat(0.01)),
         PostProcScene,

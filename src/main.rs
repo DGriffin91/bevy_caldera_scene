@@ -64,9 +64,13 @@ pub struct Args {
     #[argh(switch)]
     no_automatic_batching: bool,
 
-    /// disable gpu occlusion culling
+    /// disable gpu occlusion culling for the camera
     #[argh(switch)]
-    no_occlusion_culling: bool,
+    no_view_occlusion_culling: bool,
+
+    /// disable gpu occlusion culling for the directional light
+    #[argh(switch)]
+    no_shadow_occlusion_culling: bool,
 
     /// disable indirect drawing.
     #[argh(switch)]
@@ -144,7 +148,8 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
                 overlap_proportion: 0.2,
             }),
         ))
-        .insert(GrifLight);
+        .insert(GrifLight)
+        .insert_if(OcclusionCulling, || !args.no_shadow_occlusion_culling);
 
     // Camera
     let mut cam = commands.spawn((
@@ -172,7 +177,7 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
 
     cam.insert_if(DepthPrepass, || args.deferred)
         .insert_if(DeferredPrepass, || args.deferred)
-        .insert_if(OcclusionCulling, || !args.no_occlusion_culling)
+        .insert_if(OcclusionCulling, || !args.no_view_occlusion_culling)
         .insert_if(NoFrustumCulling, || args.no_frustum_culling)
         .insert_if(NoAutomaticBatching, || args.no_automatic_batching)
         .insert_if(NoIndirectDrawing, || args.no_indirect_drawing)

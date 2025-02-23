@@ -12,13 +12,13 @@ use bevy::{
         experimental::taa::{TemporalAntiAliasPlugin, TemporalAntiAliasing},
     },
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
+    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion},
     prelude::*,
     render::{
         render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         },
-        texture::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
         view::NoFrustumCulling,
     },
     window::{PresentMode, WindowResolution},
@@ -29,7 +29,7 @@ use camera_controller::{CameraController, CameraControllerPlugin};
 use crate::light_consts::lux;
 
 // TODO figure out a better way to reliably figure out things are done loading
-const UNIQUE_MESH_QTY: usize = 24182;
+const UNIQUE_MESH_QTY: usize = 24184;
 const MESH_INSTANCE_QTY: usize = 35689;
 
 #[derive(FromArgs, Resource, Clone)]

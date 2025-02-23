@@ -71,7 +71,7 @@ pub fn main() {
         }))
         .add_plugins((
             LogDiagnosticsPlugin::default(),
-            FrameTimeDiagnosticsPlugin,
+            FrameTimeDiagnosticsPlugin::default(),
             CameraControllerPlugin,
             TemporalAntiAliasPlugin,
         ))
@@ -267,7 +267,7 @@ fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u
             ..default()
         }),
 
-        data,
+        data: Some(data),
         ..Default::default()
     }
 }

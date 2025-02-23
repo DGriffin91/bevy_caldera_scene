@@ -29,7 +29,6 @@ use camera_controller::{CameraController, CameraControllerPlugin};
 use crate::light_consts::lux;
 
 // TODO figure out a better way to reliably figure out things are done loading
-const UNIQUE_MESH_QTY: usize = 24184;
 const MESH_INSTANCE_QTY: usize = 35689;
 
 #[derive(FromArgs, Resource, Clone)]
@@ -165,12 +164,27 @@ pub fn assign_rng_materials(
     mesh_instances: Query<(Entity, &Mesh3d)>,
     args: Res<Args>,
     mut done: Local<bool>,
+    asset_server: Res<AssetServer>,
+    scene: Query<&SceneRoot, With<PostProcScene>>,
 ) {
     // TODO figure out a better way to reliably figure out things are done loading
-    let all_meshes_loaded = meshes.len() == UNIQUE_MESH_QTY;
-    let all_mesh_instances_loaded = mesh_instances.iter().len() == MESH_INSTANCE_QTY;
 
-    if !args.random_materials || *done || !all_meshes_loaded || !all_mesh_instances_loaded {
+    if *done {
+        return;
+    }
+
+    let Some(scene) = scene.iter().next() else {
+        return;
+    };
+
+    let scene_loaded = asset_server
+        .get_recursive_dependency_load_state(&scene.0)
+        .map(|state| state.is_loaded())
+        .unwrap_or(false);
+
+    let all_mesh_instances_loaded = mesh_instances.iter().len() >= MESH_INSTANCE_QTY;
+
+    if !args.random_materials || !scene_loaded || !all_mesh_instances_loaded {
         return;
     }
 

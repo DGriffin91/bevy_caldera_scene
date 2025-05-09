@@ -332,7 +332,7 @@ const CAM_POS_3: Transform = Transform {
 };
 
 fn input(input: Res<ButtonInput<KeyCode>>, mut camera: Query<&mut Transform, With<Camera>>) {
-    let Ok(mut transform) = camera.get_single_mut() else {
+    let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     if input.just_pressed(KeyCode::KeyI) {
@@ -374,7 +374,7 @@ fn benchmark(
     if bench_started.is_none() {
         return;
     }
-    let Ok(mut transform) = camera.get_single_mut() else {
+    let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     if *bench_frame == 0 {

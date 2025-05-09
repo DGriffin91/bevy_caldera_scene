@@ -10,16 +10,22 @@ use bevy::{
     core_pipeline::{
         bloom::Bloom,
         experimental::taa::{TemporalAntiAliasPlugin, TemporalAntiAliasing},
+        prepass::{DeferredPrepass, DepthPrepass},
     },
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
-    pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, ScreenSpaceAmbientOcclusion},
+    pbr::{
+        CascadeShadowConfig, CascadeShadowConfigBuilder, DefaultOpaqueRendererMethod,
+        ScreenSpaceAmbientOcclusion,
+    },
     prelude::*,
     render::{
+        batching::NoAutomaticBatching,
+        experimental::occlusion_culling::OcclusionCulling,
         render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         },
-        view::NoFrustumCulling,
+        view::{NoCpuCulling, NoFrustumCulling, NoIndirectDrawing},
     },
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
@@ -38,10 +44,6 @@ pub struct Args {
     #[argh(switch)]
     minimal: bool,
 
-    /// whether to disable frustum culling.
-    #[argh(switch)]
-    no_frustum_culling: bool,
-
     /// assign randomly generated materials to each unique mesh (mesh instances also share materials)
     #[argh(switch)]
     random_materials: bool,
@@ -49,6 +51,34 @@ pub struct Args {
     /// quantity of unique textures sets to randomly select from. (A texture set being: base_color, roughness)
     #[argh(option, default = "0")]
     texture_count: u32,
+
+    /// use deferred shading
+    #[argh(switch)]
+    deferred: bool,
+
+    /// disable all frustum culling. Stresses queuing and batching as all mesh material entities in the scene are always drawn.
+    #[argh(switch)]
+    no_frustum_culling: bool,
+
+    /// disable automatic batching. Skips batching resulting in heavy stress on render pass draw command encoding.
+    #[argh(switch)]
+    no_automatic_batching: bool,
+
+    /// disable gpu occlusion culling for the camera
+    #[argh(switch)]
+    no_view_occlusion_culling: bool,
+
+    /// disable gpu occlusion culling for the directional light
+    #[argh(switch)]
+    no_shadow_occlusion_culling: bool,
+
+    /// disable indirect drawing.
+    #[argh(switch)]
+    no_indirect_drawing: bool,
+
+    /// disable CPU culling.
+    #[argh(switch)]
+    no_cpu_culling: bool,
 }
 
 pub fn main() {
@@ -71,14 +101,15 @@ pub fn main() {
         }))
         .add_plugins((
             LogDiagnosticsPlugin::default(),
-            FrameTimeDiagnosticsPlugin,
+            FrameTimeDiagnosticsPlugin::default(),
             CameraControllerPlugin,
             TemporalAntiAliasPlugin,
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, (assign_rng_materials, input, benchmark));
-    if args.no_frustum_culling {
-        app.add_systems(Update, add_no_frustum_culling);
+
+    if args.deferred {
+        app.insert_resource(DefaultOpaqueRendererMethod::deferred());
     }
 
     app.run();
@@ -117,7 +148,8 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
                 overlap_proportion: 0.2,
             }),
         ))
-        .insert(GrifLight);
+        .insert(GrifLight)
+        .insert_if(OcclusionCulling, || !args.no_shadow_occlusion_culling);
 
     // Camera
     let mut cam = commands.spawn((
@@ -142,6 +174,15 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
         },
         CameraController::default().print_controls(),
     ));
+
+    cam.insert_if(DepthPrepass, || args.deferred)
+        .insert_if(DeferredPrepass, || args.deferred)
+        .insert_if(OcclusionCulling, || !args.no_view_occlusion_culling)
+        .insert_if(NoFrustumCulling, || args.no_frustum_culling)
+        .insert_if(NoAutomaticBatching, || args.no_automatic_batching)
+        .insert_if(NoIndirectDrawing, || args.no_indirect_drawing)
+        .insert_if(NoCpuCulling, || args.no_cpu_culling);
+
     if !args.minimal {
         cam.insert((
             Bloom {
@@ -267,7 +308,7 @@ fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u
             ..default()
         }),
 
-        data,
+        data: Some(data),
         ..Default::default()
     }
 }
@@ -291,7 +332,7 @@ const CAM_POS_3: Transform = Transform {
 };
 
 fn input(input: Res<ButtonInput<KeyCode>>, mut camera: Query<&mut Transform, With<Camera>>) {
-    let Ok(mut transform) = camera.get_single_mut() else {
+    let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     if input.just_pressed(KeyCode::KeyI) {
@@ -333,7 +374,7 @@ fn benchmark(
     if bench_started.is_none() {
         return;
     }
-    let Ok(mut transform) = camera.get_single_mut() else {
+    let Ok(mut transform) = camera.single_mut() else {
         return;
     };
     if *bench_frame == 0 {

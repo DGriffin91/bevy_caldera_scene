@@ -7,17 +7,14 @@ mod camera_controller;
 
 use argh::FromArgs;
 use bevy::{
-    core_pipeline::{
-        bloom::Bloom,
-        experimental::taa::{TemporalAntiAliasPlugin, TemporalAntiAliasing},
-        prepass::{DeferredPrepass, DepthPrepass},
-    },
+    anti_alias::taa::TemporalAntiAliasing,
+    camera::visibility::{NoCpuCulling, NoFrustumCulling},
+    core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
     diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
-    pbr::{
-        CascadeShadowConfig, CascadeShadowConfigBuilder, DefaultOpaqueRendererMethod,
-        ScreenSpaceAmbientOcclusion,
-    },
+    light::{CascadeShadowConfig, CascadeShadowConfigBuilder},
+    pbr::{DefaultOpaqueRendererMethod, ScreenSpaceAmbientOcclusion},
+    post_process::bloom::Bloom,
     prelude::*,
     render::{
         batching::NoAutomaticBatching,
@@ -25,7 +22,7 @@ use bevy::{
         render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         },
-        view::{NoCpuCulling, NoFrustumCulling, NoIndirectDrawing},
+        view::{Hdr, NoIndirectDrawing},
     },
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
@@ -94,7 +91,7 @@ pub fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 present_mode: PresentMode::Immediate,
-                resolution: WindowResolution::new(1920.0, 1080.0).with_scale_factor_override(1.0),
+                resolution: WindowResolution::new(1920, 1080).with_scale_factor_override(1.0),
                 ..default()
             }),
             ..default()
@@ -103,7 +100,6 @@ pub fn main() {
             LogDiagnosticsPlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
             CameraControllerPlugin,
-            TemporalAntiAliasPlugin,
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, (assign_rng_materials, input, benchmark));
@@ -155,10 +151,7 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
     let mut cam = commands.spawn((
         Msaa::Off,
         Camera3d::default(),
-        Camera {
-            hdr: true,
-            ..default()
-        },
+        Hdr,
         CAM_POS_1,
         Projection::Perspective(PerspectiveProjection {
             fov: std::f32::consts::PI / 3.0,

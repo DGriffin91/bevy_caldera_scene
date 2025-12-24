@@ -10,7 +10,6 @@ use bevy::{
     anti_alias::taa::TemporalAntiAliasing,
     camera::visibility::{NoCpuCulling, NoFrustumCulling},
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
-    diagnostic::{FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin},
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     light::{CascadeShadowConfig, CascadeShadowConfigBuilder},
     pbr::{DefaultOpaqueRendererMethod, ScreenSpaceAmbientOcclusion},
@@ -97,8 +96,8 @@ pub fn main() {
             ..default()
         }))
         .add_plugins((
-            LogDiagnosticsPlugin::default(),
-            FrameTimeDiagnosticsPlugin::default(),
+            //bevy::diagnostic::LogDiagnosticsPlugin::default(),
+            //bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
             CameraControllerPlugin,
         ))
         .add_systems(Startup, setup)
@@ -157,7 +156,7 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
             fov: std::f32::consts::PI / 3.0,
             near: 0.1,
             far: 1000.0,
-            aspect_ratio: 1.0,
+            ..Default::default()
         }),
         EnvironmentMapLight {
             diffuse_map: asset_server.load("environment_maps/pisa_diffuse_rgb9e5_zstd.ktx2"),

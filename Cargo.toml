@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.17" }
+#bevy = "0.17.3"
+bevy = { git = "https://github.com/bevyengine/bevy" }
+#bevy = { git = "https://github.com/aevyrie/bevy", branch = "faster-vis-checks" }
+
 
 image = "0.24"
 anyhow = "1.0"

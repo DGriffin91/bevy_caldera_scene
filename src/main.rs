@@ -116,6 +116,10 @@ pub fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, (input, spin, frame_time_system, benchmark).chain());
 
+    if args.no_frustum_culling {
+        app.add_systems(Update, add_no_frustum_culling);
+    }
+
     if args.deferred {
         app.insert_resource(DefaultOpaqueRendererMethod::deferred());
     }

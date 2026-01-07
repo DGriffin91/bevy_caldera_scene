@@ -5,9 +5,7 @@ edition = "2021"
 
 [dependencies]
 #bevy = "0.17.3"
-bevy = { git = "https://github.com/bevyengine/bevy" }
-#bevy = { git = "https://github.com/aevyrie/bevy", branch = "faster-vis-checks" }
-
+bevy = { git = "https://github.com/bevyengine/bevy", features = ["bevy_camera_controller", "free_camera"] }
 
 image = "0.24"
 anyhow = "1.0"

@@ -3,13 +3,13 @@
 
 use std::{f32::consts::PI, time::Instant};
 
-mod camera_controller;
-
 use argh::FromArgs;
 use bevy::{
     anti_alias::taa::TemporalAntiAliasing,
     camera::visibility::{NoCpuCulling, NoFrustumCulling},
+    camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     light::{CascadeShadowConfig, CascadeShadowConfigBuilder},
     pbr::{DefaultOpaqueRendererMethod, ScreenSpaceAmbientOcclusion},
@@ -23,15 +23,12 @@ use bevy::{
         },
         view::{Hdr, NoIndirectDrawing},
     },
+    scene::SceneInstanceReady,
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
 };
-use camera_controller::{CameraController, CameraControllerPlugin};
 
 use crate::light_consts::lux;
-
-// TODO figure out a better way to reliably figure out things are done loading
-const MESH_INSTANCE_QTY: usize = 35689;
 
 #[derive(FromArgs, Resource, Clone)]
 /// Config
@@ -47,6 +44,10 @@ pub struct Args {
     /// quantity of unique textures sets to randomly select from. (A texture set being: base_color, roughness)
     #[argh(option, default = "0")]
     texture_count: u32,
+
+    /// quantity of hotel 01 models
+    #[argh(option, default = "1")]
+    count: u32,
 
     /// use deferred shading
     #[argh(switch)]
@@ -75,6 +76,14 @@ pub struct Args {
     /// disable CPU culling.
     #[argh(switch)]
     no_cpu_culling: bool,
+
+    /// spin the bistros and camera
+    #[argh(switch)]
+    spin: bool,
+
+    /// don't show frame time
+    #[argh(switch)]
+    hide_frame_time: bool,
 }
 
 pub fn main() {
@@ -82,7 +91,9 @@ pub fn main() {
 
     let mut app = App::new();
 
-    app.insert_resource(args.clone())
+    app.init_resource::<CameraPositions>()
+        .init_resource::<FrameLowHigh>()
+        .insert_resource(args.clone())
         .insert_resource(WinitSettings {
             focused_mode: UpdateMode::Continuous,
             unfocused_mode: UpdateMode::Continuous,
@@ -96,12 +107,14 @@ pub fn main() {
             ..default()
         }))
         .add_plugins((
-            //bevy::diagnostic::LogDiagnosticsPlugin::default(),
-            //bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
-            CameraControllerPlugin,
+            FrameTimeDiagnosticsPlugin {
+                max_history_length: 1000,
+                ..default()
+            },
+            FreeCameraPlugin,
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, (assign_rng_materials, input, benchmark));
+        .add_systems(Update, (input, spin, frame_time_system, benchmark).chain());
 
     if args.deferred {
         app.insert_resource(DefaultOpaqueRendererMethod::deferred());
@@ -111,17 +124,52 @@ pub fn main() {
 }
 
 #[derive(Component)]
-pub struct PostProcScene;
+pub struct Spin;
 
 #[derive(Component)]
-pub struct GrifLight;
+struct FrameTimeText;
 
-pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<Args>) {
-    commands.spawn((
-        SceneRoot(asset_server.load("hotel_01.glb#Scene0")),
-        Transform::from_scale(Vec3::splat(0.01)),
-        PostProcScene,
-    ));
+#[derive(Component)]
+pub struct PostProcScene;
+
+pub fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    args: Res<Args>,
+    positions: Res<CameraPositions>,
+) {
+    let hotel_01 = asset_server.load("hotel_01.glb#Scene0");
+    commands
+        .spawn((
+            SceneRoot(hotel_01.clone()),
+            Transform::from_scale(Vec3::splat(0.01)),
+            PostProcScene,
+            Spin,
+        ))
+        .observe(assign_rng_materials);
+
+    let mut count = 0;
+    if args.count > 1 {
+        let quantity = args.count - 1;
+        let side = (quantity as f32).sqrt().ceil() as i32 / 2;
+        'outer: for x in -side..=side {
+            for z in -side..=side {
+                if count >= quantity {
+                    break 'outer;
+                }
+                if x == 0 && z == 0 {
+                    continue;
+                }
+                commands.spawn((
+                    SceneRoot(hotel_01.clone()),
+                    Transform::from_xyz(x as f32 * 50.0, 0.0, z as f32 * 50.0)
+                        .with_scale(Vec3::splat(0.01)),
+                    Spin,
+                ));
+                count += 1;
+            }
+        }
+    }
 
     // Sun
     commands
@@ -143,7 +191,6 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
                 overlap_proportion: 0.2,
             }),
         ))
-        .insert(GrifLight)
         .insert_if(OcclusionCulling, || !args.no_shadow_occlusion_culling);
 
     // Camera
@@ -151,7 +198,7 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
         Msaa::Off,
         Camera3d::default(),
         Hdr,
-        CAM_POS_1,
+        positions[0],
         Projection::Perspective(PerspectiveProjection {
             fov: std::f32::consts::PI / 3.0,
             near: 0.1,
@@ -164,7 +211,8 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
             intensity: 1000.0,
             ..default()
         },
-        CameraController::default().print_controls(),
+        FreeCamera::default(),
+        Spin,
     ));
 
     cam.insert_if(DepthPrepass, || args.deferred)
@@ -185,28 +233,44 @@ pub fn setup(mut commands: Commands, asset_server: Res<AssetServer>, args: Res<A
         ))
         .insert(ScreenSpaceAmbientOcclusion::default());
     }
+
+    if !args.hide_frame_time {
+        commands
+            .spawn((
+                Node {
+                    left: Val::Px(1.5),
+                    top: Val::Px(1.5),
+                    ..default()
+                },
+                GlobalZIndex(-1),
+            ))
+            .with_children(|parent| {
+                parent.spawn((Text::new(""), TextColor(Color::BLACK), FrameTimeText));
+            });
+        commands.spawn(Node::default()).with_children(|parent| {
+            parent.spawn((Text::new(""), TextColor(Color::WHITE), FrameTimeText));
+        });
+    }
 }
 
 // Go though each unique mesh and randomly generate a material.
 // Each unique so instances are maintained.
 pub fn assign_rng_materials(
+    scene_ready: On<SceneInstanceReady>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     meshes: Res<Assets<Mesh>>,
     mesh_instances: Query<(Entity, &Mesh3d)>,
     args: Res<Args>,
-    mut done: Local<bool>,
     asset_server: Res<AssetServer>,
-    scene: Query<&SceneRoot, With<PostProcScene>>,
+    scenes: Query<&SceneRoot>,
 ) {
-    // TODO figure out a better way to reliably figure out things are done loading
-
-    if *done {
+    if !args.random_materials {
         return;
     }
 
-    let Some(scene) = scene.iter().next() else {
+    let Ok(scene) = scenes.get(scene_ready.entity) else {
         return;
     };
 
@@ -215,10 +279,17 @@ pub fn assign_rng_materials(
         .map(|state| state.is_loaded())
         .unwrap_or(false);
 
-    let all_mesh_instances_loaded = mesh_instances.iter().len() >= MESH_INSTANCE_QTY;
+    if !scene_loaded {
+        warn!("get_recursive_dependency_load_state not finished!");
+    }
 
-    if !args.random_materials || !scene_loaded || !all_mesh_instances_loaded {
-        return;
+    const MESH_INSTANCE_QTY: usize = 35689;
+    if MESH_INSTANCE_QTY != mesh_instances.iter().len() {
+        warn!(
+            "Mesh quantity appears incorrect. Expected: {}. Found: {}!",
+            MESH_INSTANCE_QTY,
+            mesh_instances.iter().len()
+        )
     }
 
     let base_color_textures = (0..args.texture_count)
@@ -267,8 +338,6 @@ pub fn assign_rng_materials(
             }
         }
     }
-
-    *done = true;
 }
 
 fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u32) -> Image {
@@ -305,25 +374,36 @@ fn generate_random_compressed_texture_with_mipmaps(size: u32, bc4: bool, seed: u
     }
 }
 
-const CAM_POS_1: Transform = Transform {
-    translation: Vec3::new(-20.147331, 16.818098, 42.806145),
-    rotation: Quat::from_array([-0.22917402, -0.34915298, -0.08848568, 0.9042908]),
-    scale: Vec3::ONE,
-};
+#[derive(Resource, Deref, DerefMut)]
+pub struct CameraPositions([Transform; 3]);
 
-const CAM_POS_2: Transform = Transform {
-    translation: Vec3::new(1.6168646, 1.8304176, -5.846825),
-    rotation: Quat::from_array([-0.0007061247, -0.99179053, 0.12775362, -0.005481863]),
-    scale: Vec3::ONE,
-};
+impl Default for CameraPositions {
+    fn default() -> Self {
+        Self([
+            Transform {
+                translation: Vec3::new(-20.147331, 16.818098, 42.806145),
+                rotation: Quat::from_array([-0.22917402, -0.34915298, -0.08848568, 0.9042908]),
+                scale: Vec3::ONE,
+            },
+            Transform {
+                translation: Vec3::new(1.6168646, 1.8304176, -5.846825),
+                rotation: Quat::from_array([-0.0007061247, -0.99179053, 0.12775362, -0.005481863]),
+                scale: Vec3::ONE,
+            },
+            Transform {
+                translation: Vec3::new(23.97184, 1.8938808, 30.568554),
+                rotation: Quat::from_array([-0.0013945175, 0.4685419, 0.00073959737, 0.8834399]),
+                scale: Vec3::ONE,
+            },
+        ])
+    }
+}
 
-const CAM_POS_3: Transform = Transform {
-    translation: Vec3::new(23.97184, 1.8938808, 30.568554),
-    rotation: Quat::from_array([-0.0013945175, 0.4685419, 0.00073959737, 0.8834399]),
-    scale: Vec3::ONE,
-};
-
-fn input(input: Res<ButtonInput<KeyCode>>, mut camera: Query<&mut Transform, With<Camera>>) {
+fn input(
+    input: Res<ButtonInput<KeyCode>>,
+    mut camera: Query<&mut Transform, With<Camera>>,
+    positions: Res<CameraPositions>,
+) {
     let Ok(mut transform) = camera.single_mut() else {
         return;
     };
@@ -331,19 +411,37 @@ fn input(input: Res<ButtonInput<KeyCode>>, mut camera: Query<&mut Transform, Wit
         info!("{:?}", transform);
     }
     if input.just_pressed(KeyCode::Digit1) {
-        *transform = CAM_POS_1
+        *transform = positions[0]
     }
     if input.just_pressed(KeyCode::Digit2) {
-        *transform = CAM_POS_2
+        *transform = positions[1]
     }
     if input.just_pressed(KeyCode::Digit3) {
-        *transform = CAM_POS_3
+        *transform = positions[2]
     }
 }
 
+fn spin(
+    camera: Single<Entity, With<Camera>>,
+    mut things_to_spin: Query<&mut Transform, With<Spin>>,
+    time: Res<Time>,
+    args: Res<Args>,
+    mut positions: ResMut<CameraPositions>,
+) {
+    if args.spin {
+        let camera_position = things_to_spin.get(*camera).unwrap().translation;
+        let spin = |thing_to_spin: &mut Transform| {
+            thing_to_spin.rotate_around(camera_position, Quat::from_rotation_y(time.delta_secs()));
+        };
+        things_to_spin.iter_mut().for_each(|mut s| spin(s.as_mut())); // WHY
+        positions.iter_mut().for_each(spin);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn benchmark(
     input: Res<ButtonInput<KeyCode>>,
-    mut camera: Query<&mut Transform, With<Camera>>,
+    mut camera_transform: Single<&mut Transform, With<Camera>>,
     materials: Res<Assets<StandardMaterial>>,
     meshes: Res<Assets<Mesh>>,
     has_std_mat: Query<&MeshMaterial3d<StandardMaterial>>,
@@ -352,12 +450,15 @@ fn benchmark(
     mut bench_frame: Local<u32>,
     mut count_per_step: Local<u32>,
     time: Res<Time>,
+    positions: Res<CameraPositions>,
+    mut low_high: ResMut<FrameLowHigh>,
 ) {
     if input.just_pressed(KeyCode::KeyB) && bench_started.is_none() {
+        low_high.bench_reset();
         *bench_started = Some(Instant::now());
         *bench_frame = 0;
-        // Try to render for around 2s or at least 30 frames per step
-        *count_per_step = ((2.0 / time.delta_secs()) as u32).max(30);
+        // Try to render for around 3s or at least 60 frames per step
+        *count_per_step = ((3.0 / time.delta_secs()) as u32).max(60);
         println!(
             "Starting Benchmark with {} frames per step",
             *count_per_step
@@ -366,23 +467,23 @@ fn benchmark(
     if bench_started.is_none() {
         return;
     }
-    let Ok(mut transform) = camera.single_mut() else {
-        return;
-    };
     if *bench_frame == 0 {
-        *transform = CAM_POS_1
+        **camera_transform = positions[0]
     } else if *bench_frame == *count_per_step {
-        *transform = CAM_POS_2
+        **camera_transform = positions[1]
     } else if *bench_frame == *count_per_step * 2 {
-        *transform = CAM_POS_3
+        **camera_transform = positions[2]
     } else if *bench_frame == *count_per_step * 3 {
         let elapsed = bench_started.unwrap().elapsed().as_secs_f32();
         println!(
-            "Benchmark avg cpu frame time: {:.2}ms",
+            "{:>7.2}ms Benchmark avg cpu frame time",
             (elapsed / *bench_frame as f32) * 1000.0
         );
+        let r = 1.0 / *bench_frame as f64;
+        println!("{:>7.2}ms avg 1% low", low_high.sum_one_percent_low * r);
+        println!("{:>7.2}ms avg 1% high", low_high.sum_one_percent_high * r);
         println!(
-            "Meshes: {}\nMesh Instances: {}\nMaterials: {}\nMaterial Instances: {}",
+            "{:>7} Meshes\n{:>7} Mesh Instances\n{:>7} Materials\n{:>7} Material Instances",
             meshes.len(),
             has_mesh.iter().len(),
             materials.len(),
@@ -390,9 +491,10 @@ fn benchmark(
         );
         *bench_started = None;
         *bench_frame = 0;
-        *transform = CAM_POS_1;
+        **camera_transform = positions[0];
     }
     *bench_frame += 1;
+    low_high.bench_step();
 }
 
 pub fn add_no_frustum_culling(
@@ -446,4 +548,57 @@ fn calculate_bcn_image_size_with_mips(size: u32, block_size: u32) -> (u32, u32) 
         mip_size = (mip_size / 2).max(1);
     }
     (total_size, mip_count.max(1))
+}
+
+#[derive(Resource, Default)]
+struct FrameLowHigh {
+    one_percent_low: f64,
+    one_percent_high: f64,
+    sum_one_percent_low: f64,
+    sum_one_percent_high: f64,
+}
+
+impl FrameLowHigh {
+    fn bench_reset(&mut self) {
+        self.sum_one_percent_high = 0.0;
+        self.sum_one_percent_low = 0.0;
+    }
+    fn bench_step(&mut self) {
+        self.sum_one_percent_high += self.one_percent_high;
+        self.sum_one_percent_low += self.one_percent_low;
+    }
+}
+
+fn frame_time_system(
+    diagnostics: Res<DiagnosticsStore>,
+    mut text: Query<&mut Text, With<FrameTimeText>>,
+    mut measurements: Local<Vec<f64>>,
+    mut low_high: ResMut<FrameLowHigh>,
+) {
+    if let Some(frame_time) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME) {
+        let mut string = format!(
+            "\n{:>7.2}ms ema\n{:>7.2}ms sma\n",
+            frame_time.smoothed().unwrap_or_default(),
+            frame_time.average().unwrap_or_default()
+        );
+
+        if frame_time.history_len() >= 100 {
+            measurements.clear();
+            measurements.extend(frame_time.measurements().map(|t| t.value));
+            measurements.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let count = measurements.len() / 100;
+            low_high.one_percent_low = measurements.iter().take(count).sum::<f64>() / count as f64;
+            low_high.one_percent_high =
+                measurements.iter().rev().take(count).sum::<f64>() / count as f64;
+
+            string.push_str(&format!(
+                "{:>7.2}ms 1% low\n{:>7.2}ms 1% high\n",
+                low_high.one_percent_low, low_high.one_percent_high
+            ));
+        }
+
+        for mut t in &mut text {
+            t.0 = string.clone();
+        }
+    };
 }

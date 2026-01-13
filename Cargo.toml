@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-#bevy = "0.17.3"
-bevy = { git = "https://github.com/bevyengine/bevy", features = ["bevy_camera_controller", "free_camera"] }
+bevy = { version = "0.18", features = ["bevy_camera_controller", "free_camera"] }
 
 image = "0.24"
 anyhow = "1.0"

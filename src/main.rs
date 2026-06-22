@@ -6,7 +6,10 @@ use std::{f32::consts::PI, time::Instant};
 use argh::FromArgs;
 use bevy::{
     anti_alias::taa::TemporalAntiAliasing,
-    camera::visibility::{NoCpuCulling, NoFrustumCulling},
+    camera::{
+        visibility::{NoCpuCulling, NoFrustumCulling},
+        Hdr,
+    },
     camera_controller::free_camera::{FreeCamera, FreeCameraPlugin},
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
     diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
@@ -17,15 +20,15 @@ use bevy::{
     prelude::*,
     render::{
         batching::NoAutomaticBatching,
-        experimental::occlusion_culling::OcclusionCulling,
+        occlusion_culling::OcclusionCulling,
         render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         },
-        view::{Hdr, NoIndirectDrawing},
+        view::NoIndirectDrawing,
     },
-    scene::SceneInstanceReady,
     window::{PresentMode, WindowResolution},
     winit::{UpdateMode, WinitSettings},
+    world_serialization::WorldInstanceReady,
 };
 
 use crate::light_consts::lux;
@@ -145,7 +148,7 @@ pub fn setup(
     let hotel_01 = asset_server.load("hotel_01.glb#Scene0");
     commands
         .spawn((
-            SceneRoot(hotel_01.clone()),
+            WorldAssetRoot(hotel_01.clone()),
             Transform::from_scale(Vec3::splat(0.01)),
             PostProcScene,
             Spin,
@@ -165,7 +168,7 @@ pub fn setup(
                     continue;
                 }
                 commands.spawn((
-                    SceneRoot(hotel_01.clone()),
+                    WorldAssetRoot(hotel_01.clone()),
                     Transform::from_xyz(x as f32 * 50.0, 0.0, z as f32 * 50.0)
                         .with_scale(Vec3::splat(0.01)),
                     Spin,
@@ -182,7 +185,7 @@ pub fn setup(
             DirectionalLight {
                 color: Color::srgb(1.0, 0.87, 0.78),
                 illuminance: lux::FULL_DAYLIGHT,
-                shadows_enabled: !args.minimal,
+                shadow_maps_enabled: !args.minimal,
                 shadow_depth_bias: 0.2,
                 shadow_normal_bias: 0.2,
                 ..default()
@@ -260,7 +263,7 @@ pub fn setup(
 // Go though each unique mesh and randomly generate a material.
 // Each unique so instances are maintained.
 pub fn assign_rng_materials(
-    scene_ready: On<SceneInstanceReady>,
+    scene_ready: On<WorldInstanceReady>,
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
@@ -268,7 +271,7 @@ pub fn assign_rng_materials(
     mesh_instances: Query<(Entity, &Mesh3d)>,
     args: Res<Args>,
     asset_server: Res<AssetServer>,
-    scenes: Query<&SceneRoot>,
+    scenes: Query<&WorldAssetRoot>,
 ) {
     if !args.random_materials {
         return;
